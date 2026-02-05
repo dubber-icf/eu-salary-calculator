@@ -1,0 +1,9 @@
+▲ Next.js 16.1.6 (Turbopack)
+- Local:         http://localhost:3000
+- Network:       http://172.26.9.94:3000
+
+✓ Starting...
+✓ Ready in 1950ms
+ POST /api/calculate 200 in 2.7s (compile: 2.7s, render: 61ms)
+○ Compiling / ...
+ GET / 200 in 932ms (compile: 343ms, render: 589ms)
