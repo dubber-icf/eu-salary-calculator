@@ -17,13 +17,14 @@
     "is-number": "^7.0.0",
     "math-intrinsics": "^1.1.0",
     "micromatch": "^4.0.8",
-    "next": "14.2.5",
+    "next": "^14.2.5",
     "object-inspect": "^1.13.4",
     "pg": "^8.11.0",
     "picomatch": "^4.0.3",
     "react": "18.2.0",
     "react-dom": "18.2.0",
-    "to-regex-range": "^5.0.1"
+    "to-regex-range": "^5.0.1",
+    "underscore": "^1.13.7"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
@@ -32,9 +33,23 @@
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "eslint": "^8.57.0",
-    "eslint-config-next": "14.2.5",
+    "eslint-config-next": "^14.2.5",
+    "render-cli": "^0.3.2",
     "tailwindcss": "^4",
     "tsx": "^4.19.0",
     "typescript": "^5"
-  }
+  },
+  "description": "A Next.js application for calculating EU project staff salaries with cumulative truing logic.",
+  "main": "index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dubber-icf/eu-salary-calculator.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/dubber-icf/eu-salary-calculator/issues"
+  },
+  "homepage": "https://github.com/dubber-icf/eu-salary-calculator#readme"
 }
