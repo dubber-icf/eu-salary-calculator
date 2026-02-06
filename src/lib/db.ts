@@ -1,108 +1,120 @@
-import Database from 'better-sqlite3';
-import path from 'path';
+import { Pool, PoolClient } from 'pg';
 
-const DB_PATH = path.join(process.cwd(), 'data', 'salary.db');
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL || 'postgresql://localhost:5432/salary_calc',
+  ssl: process.env.NODE_ENV === 'production' ? { rejectUnauthorized: false } : false,
+});
 
-let db: Database.Database | null = null;
+let db: Pool | null = null;
 
-export function getDb(): Database.Database {
+export function getDb(): Pool {
   if (!db) {
-    db = new Database(DB_PATH);
-    db.pragma('journal_mode = WAL');
+    db = pool;
     initSchema();
   }
   return db;
 }
 
-function initSchema() {
-  if (!db) return;
+export async function query<T = any>(text: string, params?: any[]): Promise<T[]> {
+  const result = await pool.query(text, params);
+  return result.rows as T[];
+}
 
-  // Staff table with FTE history as JSON
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS staff (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      email TEXT,
-      fte_history TEXT NOT NULL, -- JSON array of {from_date, to_date, percentage}
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+export async function getClient(): Promise<PoolClient> {
+  return pool.connect();
+}
 
-  // Projects with periods
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS projects (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      code TEXT NOT NULL UNIQUE,
-      start_date TEXT NOT NULL, -- ISO date YYYY-MM-DD
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+async function initSchema() {
+  const client = await getClient();
+  try {
+    // Staff table with FTE history as JSON
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS staff (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        email TEXT,
+        fte_history JSONB NOT NULL DEFAULT '[]',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS project_periods (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      project_id INTEGER NOT NULL,
-      period_number INTEGER NOT NULL,
-      start_date TEXT NOT NULL,
-      end_date TEXT NOT NULL,
-      description TEXT,
-      FOREIGN KEY (project_id) REFERENCES projects(id),
-      UNIQUE(project_id, period_number)
-    )
-  `);
+    // Projects with periods
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS projects (
+        id SERIAL PRIMARY KEY,
+        name TEXT NOT NULL,
+        code TEXT NOT NULL UNIQUE,
+        start_date TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  // ECB rates storage
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS ecb_rates (
-      date TEXT PRIMARY KEY,
-      eur_sek REAL NOT NULL,
-      fetched_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS project_periods (
+        id SERIAL PRIMARY KEY,
+        project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+        period_number INTEGER NOT NULL,
+        start_date TEXT NOT NULL,
+        end_date TEXT NOT NULL,
+        description TEXT,
+        UNIQUE(project_id, period_number)
+      )
+    `);
 
-  // Monthly timesheet entries
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS monthly_entries (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      staff_id INTEGER NOT NULL,
-      year INTEGER NOT NULL,
-      month INTEGER NOT NULL,
-      project_allocations TEXT NOT NULL, -- JSON: [{project_id, period_number, days}]
-      non_eu_days REAL DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-      UNIQUE(staff_id, year, month)
-    )
-  `);
+    // ECB rates storage
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS ecb_rates (
+        date TEXT PRIMARY KEY,
+        eur_sek REAL NOT NULL,
+        fetched_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
 
-  // Payment records with full audit trail
-  db.exec(`
-    CREATE TABLE IF NOT EXISTS payments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      staff_id INTEGER NOT NULL,
-      year INTEGER NOT NULL,
-      month INTEGER NOT NULL,
-      gross_sek REAL NOT NULL,
-      eu_portion_sek REAL NOT NULL,
-      non_eu_portion_sek REAL NOT NULL,
-      total_eur_claimable REAL NOT NULL,
-      eu_eur_amount REAL NOT NULL,
-      non_eu_eur_amount REAL NOT NULL,
-      rates_used TEXT NOT NULL, -- JSON: detailed rate info per project/non-EU
-      cumulative_eur_to_date REAL NOT NULL,
-      cumulative_sek_paid_to_date REAL NOT NULL,
-      cumulative_avg_rate REAL NOT NULL,
-      calculation_breakdown TEXT NOT NULL, -- JSON: full audit trail
-      paid_at DATETIME,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-    )
-  `);
+    // Monthly timesheet entries
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS monthly_entries (
+        id SERIAL PRIMARY KEY,
+        staff_id INTEGER NOT NULL,
+        year INTEGER NOT NULL,
+        month INTEGER NOT NULL,
+        project_allocations JSONB NOT NULL DEFAULT '[]',
+        non_eu_days REAL DEFAULT 0,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(staff_id, year, month)
+      )
+    `);
 
-  // Indexes for performance
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_payments_staff ON payments(staff_id, year, month)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_entries_staff ON monthly_entries(staff_id, year, month)`);
-  db.exec(`CREATE INDEX IF NOT EXISTS idx_rates_date ON ecb_rates(date)`);
+    // Payment records with full audit trail
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS payments (
+        id SERIAL PRIMARY KEY,
+        staff_id INTEGER NOT NULL,
+        year INTEGER NOT NULL,
+        month INTEGER NOT NULL,
+        gross_sek REAL NOT NULL,
+        eu_portion_sek REAL NOT NULL,
+        non_eu_portion_sek REAL NOT NULL,
+        total_eur_claimable REAL NOT NULL,
+        eu_eur_amount REAL NOT NULL,
+        non_eu_eur_amount REAL NOT NULL,
+        rates_used JSONB NOT NULL,
+        cumulative_eur_to_date REAL NOT NULL,
+        cumulative_sek_paid_to_date REAL NOT NULL,
+        cumulative_avg_rate REAL NOT NULL,
+        calculation_breakdown JSONB NOT NULL,
+        paid_at TIMESTAMP,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Indexes
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_payments_staff ON payments(staff_id, year, month)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_entries_staff ON monthly_entries(staff_id, year, month)`);
+    await client.query(`CREATE INDEX IF NOT EXISTS idx_rates_date ON ecb_rates(date)`);
+  } finally {
+    client.release();
+  }
 }
 
 export interface Staff {
@@ -236,5 +248,15 @@ export function getFTEForDate(fteHistory: FTEHistory[], date: string): number {
       return fte.percentage;
     }
   }
-  return 1.0; // Default to 100%
+  return 1.0;
+}
+
+// Type assertion helpers for PostgreSQL JSON columns
+export function parseJson<T>(str: string | null | undefined, defaultValue: T): T {
+  if (!str) return defaultValue;
+  try {
+    return JSON.parse(str) as T;
+  } catch {
+    return defaultValue;
+  }
 }

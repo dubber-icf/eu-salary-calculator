@@ -5,8 +5,8 @@ export async function POST(request: NextRequest) {
   const body: CalculationInput = await request.json();
   
   try {
-    const result = calculateSalary(body);
-    const paymentId = storePayment(body, result);
+    const result = await calculateSalary(body);
+    const paymentId = await storePayment(body, result);
     
     return NextResponse.json({
       success: true,

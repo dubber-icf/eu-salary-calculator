@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb } from '@/lib/db';
+import { getDb, query } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
@@ -8,17 +8,15 @@ export async function GET(request: NextRequest) {
   
   const db = getDb();
   
-  let query = 'SELECT * FROM ecb_rates';
-  const params: any[] = [];
-  
   if (startDate && endDate) {
-    query += ' WHERE date >= ? AND date <= ? ORDER BY date';
-    params.push(startDate, endDate);
-  } else {
-    query += ' ORDER BY date DESC LIMIT 100';
+    const rates = await db.query(
+      'SELECT * FROM ecb_rates WHERE date >= $1 AND date <= $2 ORDER BY date',
+      [startDate, endDate]
+    );
+    return NextResponse.json(rates);
   }
   
-  const rates = db.prepare(query).all(...params);
+  const rates = await db.query('SELECT * FROM ecb_rates ORDER BY date DESC LIMIT 100');
   return NextResponse.json(rates);
 }
 
@@ -26,21 +24,22 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const db = getDb();
   
-  // Insert or update rates
   const inserted: string[] = [];
   const updated: string[] = [];
   
-  for (const rate of body.rates || [body]) {
+  const rates = Array.isArray(body.rates) ? body.rates : [body];
+  
+  for (const rate of rates) {
     const date = rate.date || rate;
     const eurSek = rate.eur_sek || rate.rate || rate.value;
     
-    const existing = db.prepare('SELECT * FROM ecb_rates WHERE date = ?').get(date);
+    const existing = await db.query('SELECT * FROM ecb_rates WHERE date = $1', [date]);
     
-    if (existing) {
-      db.prepare('UPDATE ecb_rates SET eur_sek = ? WHERE date = ?').run(eurSek, date);
+    if (existing.length > 0) {
+      await db.query('UPDATE ecb_rates SET eur_sek = $1 WHERE date = $2', [eurSek, date]);
       updated.push(date);
     } else {
-      db.prepare('INSERT INTO ecb_rates (date, eur_sek) VALUES (?, ?)').run(date, eurSek);
+      await db.query('INSERT INTO ecb_rates (date, eur_sek) VALUES ($1, $2)', [date, eurSek]);
       inserted.push(date);
     }
   }

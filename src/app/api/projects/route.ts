@@ -1,29 +1,30 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getDb, Project, ProjectPeriod } from '@/lib/db';
+import { getDb, query } from '@/lib/db';
 
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
-  const id = searchParams.get('id'); // Query for specific project
+  const id = searchParams.get('id');
   
   const db = getDb();
   
   if (id) {
-    const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(parseInt(id));
-    if (!project) {
+    const result = await db.query('SELECT * FROM projects WHERE id = $1', [parseInt(id)]);
+    if (result.length === 0) {
       return NextResponse.json({ error: 'Project not found' }, { status: 404 });
     }
     
-    const periods = db.prepare('SELECT * FROM project_periods WHERE project_id = ? ORDER BY period_number').all(project.id);
+    const project = result[0];
+    const periods = await db.query('SELECT * FROM project_periods WHERE project_id = $1 ORDER BY period_number', [project.id]);
     return NextResponse.json({ ...project, periods });
   }
   
-  const projects = db.prepare('SELECT * FROM projects ORDER BY name').all();
+  const projects = await db.query('SELECT * FROM projects ORDER BY name');
   
   // Get periods for each project
-  const projectsWithPeriods = projects.map((project: any) => {
-    const periods = db.prepare('SELECT * FROM project_periods WHERE project_id = ? ORDER BY period_number').all(project.id);
+  const projectsWithPeriods = await Promise.all(projects.map(async (project: any) => {
+    const periods = await db.query('SELECT * FROM project_periods WHERE project_id = $1 ORDER BY period_number', [project.id]);
     return { ...project, periods };
-  });
+  }));
   
   return NextResponse.json(projectsWithPeriods);
 }
@@ -32,20 +33,23 @@ export async function POST(request: NextRequest) {
   const body = await request.json();
   const db = getDb();
   
-  const result = db.prepare(`
-    INSERT INTO projects (name, code, start_date) VALUES (?, ?, ?)
-  `).run(body.name, body.code, body.start_date);
+  const result = await db.query(
+    `INSERT INTO projects (name, code, start_date) VALUES ($1, $2, $3) RETURNING id`,
+    [body.name, body.code, body.start_date]
+  );
   
-  // Add initial periods if provided
+  const projectId = result[0]?.id;
+  
   if (body.periods && body.periods.length > 0) {
     for (const period of body.periods) {
-      db.prepare(`
-        INSERT INTO project_periods (project_id, period_number, start_date, end_date, description) VALUES (?, ?, ?, ?, ?)
-      `).run(result.lastInsertRowid, period.period_number, period.start_date, period.end_date, period.description);
+      await db.query(
+        `INSERT INTO project_periods (project_id, period_number, start_date, end_date, description) VALUES ($1, $2, $3, $4, $5)`,
+        [projectId, period.period_number, period.start_date, period.end_date, period.description]
+      );
     }
   }
   
-  return NextResponse.json({ id: result.lastInsertRowid, ...body });
+  return NextResponse.json({ id: projectId, ...body });
 }
 
 export async function PUT(request: NextRequest) {
@@ -59,28 +63,24 @@ export async function PUT(request: NextRequest) {
   const body = await request.json();
   const db = getDb();
   
-  // Check if project exists
-  const existing = db.prepare('SELECT * FROM projects WHERE id = ?').get(parseInt(id));
-  if (!existing) {
+  const existing = await db.query('SELECT * FROM projects WHERE id = $1', [parseInt(id)]);
+  if (existing.length === 0) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 });
   }
   
-  // Update project
-  db.prepare(`
-    UPDATE projects 
-    SET name = ?, code = ?, start_date = ?
-    WHERE id = ?
-  `).run(body.name, body.code, body.start_date, parseInt(id));
+  await db.query(
+    `UPDATE projects SET name = $1, code = $2, start_date = $3 WHERE id = $4`,
+    [body.name, body.code, body.start_date, parseInt(id)]
+  );
   
-  // Delete existing periods
-  db.prepare('DELETE FROM project_periods WHERE project_id = ?').run(parseInt(id));
+  await db.query('DELETE FROM project_periods WHERE project_id = $1', [parseInt(id)]);
   
-  // Add new periods
   if (body.periods && body.periods.length > 0) {
     for (const period of body.periods) {
-      db.prepare(`
-        INSERT INTO project_periods (project_id, period_number, start_date, end_date, description) VALUES (?, ?, ?, ?, ?)
-      `).run(parseInt(id), period.period_number, period.start_date, period.end_date, period.description);
+      await db.query(
+        `INSERT INTO project_periods (project_id, period_number, start_date, end_date, description) VALUES ($1, $2, $3, $4, $5)`,
+        [parseInt(id), period.period_number, period.start_date, period.end_date, period.description]
+      );
     }
   }
   
@@ -97,21 +97,13 @@ export async function DELETE(request: NextRequest) {
   
   const db = getDb();
   
-  // Check if project exists
-  const existing = db.prepare('SELECT * FROM projects WHERE id = ?').get(parseInt(id));
-  if (!existing) {
+  const existing = await db.query('SELECT * FROM projects WHERE id = $1', [parseInt(id)]);
+  if (existing.length === 0) {
     return NextResponse.json({ error: 'Project not found' }, { status: 404 });
   }
   
-  // Delete related entries and payments first (foreign key constraints)
-  db.prepare('DELETE FROM monthly_entries WHERE 1=0'); // We'll implement this properly later if needed
-  db.prepare('DELETE FROM payments WHERE 1=0'); // We'll implement this properly later if needed
-  
-  // Delete periods
-  db.prepare('DELETE FROM project_periods WHERE project_id = ?').run(parseInt(id));
-  
-  // Now delete the project
-  db.prepare('DELETE FROM projects WHERE id = ?').run(parseInt(id));
+  await db.query('DELETE FROM project_periods WHERE project_id = $1', [parseInt(id)]);
+  await db.query('DELETE FROM projects WHERE id = $1', [parseInt(id)]);
   
   return NextResponse.json({ success: true, deletedId: parseInt(id) });
 }
