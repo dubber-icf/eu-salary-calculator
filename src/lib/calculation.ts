@@ -27,9 +27,7 @@ export interface CalculationResult {
  * Calculate average EUR-SEK rate between two dates from ECB data
  */
 export async function getAverageECBRate(startDate: string, endDate: string): Promise<number> {
-  const db = getDb();
-  
-  const result = await db.query(
+  const result = await query(
     `SELECT eur_sek FROM ecb_rates WHERE date >= $1 AND date <= $2 ORDER BY date`,
     [startDate, endDate]
   );
@@ -55,9 +53,7 @@ export async function getCurrentMonthRate(year: number, month: number): Promise<
  * Get previous payments for a staff member up to (but not including) the given month/year
  */
 export async function getPreviousPayments(staffId: number, year: number, month: number): Promise<Payment[]> {
-  const db = getDb();
-  
-  return db.query(
+  return query(
     `SELECT * FROM payments WHERE staff_id = $1 AND (year < $2 OR (year = $2 AND month < $3)) ORDER BY year, month`,
     [staffId, year, month]
   ) as Promise<Payment[]>;
@@ -73,10 +69,7 @@ export async function getCumulativeEURToDate(
   year: number, 
   month: number
 ): Promise<number> {
-  const db = getDb();
-  
-  // Get all entries up to this month/year
-  const entries = await db.query(
+  const entries = await query(
     `SELECT * FROM monthly_entries WHERE staff_id = $1 AND (year < $2 OR (year = $2 AND month <= $3)) ORDER BY year, month`,
     [staffId, year, month]
   );
@@ -90,8 +83,9 @@ export async function getCumulativeEURToDate(
     );
     
     if (allocation) {
+      const staffResult = await query(`SELECT fte_history FROM staff WHERE id = $1`, [staffId]);
       const fte = getFTEForDate(
-        JSON.parse((await db.query(`SELECT fte_history FROM staff WHERE id = $1`, [staffId]))[0]?.fte_history || '[]'),
+        JSON.parse(staffResult[0]?.fte_history || '[]'),
         `${entry.year}-${String(entry.month).padStart(2, '0')}-15`
       );
       
@@ -108,11 +102,10 @@ export async function getCumulativeEURToDate(
  * Main calculation function for salary payment
  */
 export async function calculateSalary(input: CalculationInput): Promise<CalculationResult> {
-  const db = getDb();
   const { staffId, year, month } = input;
   
   // Get staff record
-  const staffResult = await db.query(`SELECT * FROM staff WHERE id = $1`, [staffId]);
+  const staffResult = await query(`SELECT * FROM staff WHERE id = $1`, [staffId]);
   const staff = staffResult[0] as any;
   if (!staff) {
     throw new Error(`Staff not found: ${staffId}`);
@@ -122,7 +115,7 @@ export async function calculateSalary(input: CalculationInput): Promise<Calculat
   const fte = getFTEForDate(fteHistory, `${year}-${String(month).padStart(2, '0')}-15`);
   
   // Get the monthly entry
-  const entryResult = await db.query(
+  const entryResult = await query(
     `SELECT * FROM monthly_entries WHERE staff_id = $1 AND year = $2 AND month = $3`,
     [staffId, year, month]
   );
@@ -159,9 +152,9 @@ export async function calculateSalary(input: CalculationInput): Promise<Calculat
     const daysWorked = allocGroup.reduce((sum: number, a: any) => sum + a.days, 0);
     
     // Get project info
-    const projectResult = await db.query(`SELECT * FROM projects WHERE id = $1`, [projectId]);
+    const projectResult = await query(`SELECT * FROM projects WHERE id = $1`, [projectId]);
     const project = projectResult[0] as any;
-    const periodResult = await db.query(
+    const periodResult = await query(
       `SELECT * FROM project_periods WHERE project_id = $1 AND period_number = $2`,
       [projectId, periodNumber]
     );
@@ -298,7 +291,7 @@ export async function calculateSalary(input: CalculationInput): Promise<Calculat
   let periodStartDate = '';
   const firstGroup = Object.values(projectPeriodGroups)[0] as { projectId: number; periodNumber: number }[] | undefined;
   if (firstGroup && firstGroup.length > 0) {
-    const periodResult = await db.query(
+    const periodResult = await query(
       'SELECT start_date FROM project_periods WHERE project_id = $1 AND period_number = $2',
       [firstGroup[0].projectId, firstGroup[0].periodNumber]
     );
@@ -334,10 +327,9 @@ export async function calculateSalary(input: CalculationInput): Promise<Calculat
  * Store a payment record
  */
 export async function storePayment(input: CalculationInput, result: CalculationResult): Promise<number> {
-  const db = getDb();
   const { staffId, year, month } = input;
   
-  const result2 = await db.query(
+  const result2 = await query(
     `INSERT INTO payments (
       staff_id, year, month, gross_sek, eu_portion_sek, non_eu_portion_sek,
       total_eur_claimable, eu_eur_amount, non_eu_eur_amount, rates_used,
